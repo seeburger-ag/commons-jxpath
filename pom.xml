@@ -80,6 +80,12 @@ under the License.
     <commons.jira.id>JXPATH</commons.jira.id>
     <commons.jira.pid>12310480</commons.jira.pid>
     <commons.osgi.import>*;resolution:=optional</commons.osgi.import>
+
+    <!-- SEE: overwriting repository URLs and names -->
+    <distMgmtSnapshotsUrl>https://repo.seeburger.de/archiva/repository/snapshot/</distMgmtSnapshotsUrl>
+    <distMgmtReleaseUrl>https://repo.seeburger.de/archiva/repository/release/</distMgmtReleaseUrl>
+    <distMgmtSnapshotsName>SEE Development Snapshot Repository</distMgmtSnapshotsName>
+    <distMgmtReleaseName>SEE Release Distribution Repository</distMgmtReleaseName>
   </properties>
 
   <build>
@@ -121,6 +127,15 @@ under the License.
           <ignorePathsToDelete>
             <ignorePathToDelete>javadocs</ignorePathToDelete>
           </ignorePathsToDelete>
+        </configuration>
+      </plugin>
+
+      <!-- SEEBURGER, disable GPG signing for releases -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-gpg-plugin</artifactId>
+        <configuration>
+        <skip>true</skip>
         </configuration>
       </plugin>
     </plugins>
@@ -286,10 +301,22 @@ under the License.
   </reporting>
 
   <distributionManagement>
+    <repository>
+      <id>apache.releases.https</id>
+      <name>${distMgmtReleaseName}</name>
+      <url>${distMgmtReleaseUrl}</url>
+    </repository>
+    <snapshotRepository>
+      <id>apache.snapshots.https</id>
+      <name>${distMgmtSnapshotsName}</name>
+      <url>${distMgmtSnapshotsUrl}</url>
+    </snapshotRepository>
+    <!--
     <site>
       <id>apache.website</id>
       <name>Default Site</name>
       <url>scp://people.apache.org/www/commons.apache.org/jxpath/</url>
     </site>
+    -->
   </distributionManagement>
 </project>
