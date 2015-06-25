@@ -718,7 +718,27 @@ public class SimplePathInterpreter {
             final double round = 0.5;
             return (int) (InfoSetUtil.doubleValue(value) + round) - 1;
         }
+        else if (value instanceof String && isValidIndex(value.toString()))
+        {
+            return Integer.parseInt(value.toString()) - 1;
+        }
+
         return InfoSetUtil.booleanValue(value) ? 0 : -1;
+    }
+
+
+    private static boolean isValidIndex(String str)
+    {
+        char[] strAsChar = str.toCharArray();
+        for (int i = 0; i < str.length(); i++)
+        {
+            if (!Character.isDigit(strAsChar[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
