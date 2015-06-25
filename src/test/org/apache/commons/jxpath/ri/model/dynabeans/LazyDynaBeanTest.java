@@ -23,12 +23,12 @@ import org.apache.commons.jxpath.JXPathTestCase;
 import org.apache.commons.jxpath.ri.JXPathContextReferenceImpl;
 
 /**
- * 
+ *
  * @version $Revision$ $Date$
  */
 public class LazyDynaBeanTest extends JXPathTestCase {
 
-    public void testLazyProperty() throws JXPathNotFoundException {
+    private void getLazyProperty() throws JXPathNotFoundException {
         LazyDynaBean bean = new LazyDynaBean();
         JXPathContext context = JXPathContext.newContext(bean);
         context.getValue("nosuch");
@@ -37,7 +37,7 @@ public class LazyDynaBeanTest extends JXPathTestCase {
     public void testStrictLazyDynaBeanPropertyFactory() {
         JXPathContextReferenceImpl.addNodePointerFactory(new StrictLazyDynaBeanPointerFactory());
         try {
-            testLazyProperty();
+            getLazyProperty();
             fail();
         } catch (JXPathNotFoundException e) {
             //okay
