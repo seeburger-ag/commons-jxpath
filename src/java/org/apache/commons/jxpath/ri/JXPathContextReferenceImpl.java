@@ -19,13 +19,15 @@ package org.apache.commons.jxpath.ri;
 import java.lang.ref.SoftReference;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.Map;
-import java.util.Vector;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.jxpath.CompiledExpression;
 import org.apache.commons.jxpath.ExceptionHandler;
@@ -51,8 +53,8 @@ import org.apache.commons.jxpath.ri.model.beans.BeanPointerFactory;
 import org.apache.commons.jxpath.ri.model.beans.CollectionPointerFactory;
 import org.apache.commons.jxpath.ri.model.container.ContainerPointerFactory;
 import org.apache.commons.jxpath.ri.model.dynamic.DynamicPointerFactory;
-import org.apache.commons.jxpath.util.ReverseComparator;
 import org.apache.commons.jxpath.util.ClassLoaderUtil;
+import org.apache.commons.jxpath.util.ReverseComparator;
 import org.apache.commons.jxpath.util.TypeUtils;
 
 /**
@@ -70,13 +72,13 @@ public class JXPathContextReferenceImpl extends JXPathContext {
     public static final boolean USE_SOFT_CACHE = true;
 
     private static final Compiler COMPILER = new TreeCompiler();
-    private static Map compiled = new HashMap();
-    private static int cleanupCount = 0;
+    private static ConcurrentMap compiled = new ConcurrentHashMap();
+    private static final AtomicInteger cleanupCount = new AtomicInteger();
 
     private static NodePointerFactory[] nodeFactoryArray = null;
     // The frequency of the cache cleanup
-    private static final int CLEANUP_THRESHOLD = 500;
-    private static final Vector nodeFactories = new Vector();
+    private static final int CLEANUP_THRESHOLD = 100;
+    private static final Collection nodeFactories = new CopyOnWriteArrayList();
 
     static {
         nodeFactories.add(new CollectionPointerFactory());
@@ -139,10 +141,8 @@ public class JXPathContextReferenceImpl extends JXPathContext {
      * @param factory NodePointerFactory to add
      */
     public static void addNodePointerFactory(NodePointerFactory factory) {
-        synchronized (nodeFactories) {
-            nodeFactories.add(factory);
-            nodeFactoryArray = null;
-        }
+        nodeFactories.add(factory);
+        nodeFactoryArray = null;
     }
 
     /**
@@ -179,9 +179,9 @@ public class JXPathContextReferenceImpl extends JXPathContext {
             Object contextBean, Pointer contextPointer) {
         super(parentContext, contextBean);
 
-        synchronized (nodeFactories) {
+//        synchronized (nodeFactories) {
             createNodeFactoryArray();
-        }
+//        }
 
         if (contextPointer != null) {
             this.contextPointer = contextPointer;
@@ -230,18 +230,24 @@ public class JXPathContextReferenceImpl extends JXPathContext {
      */
     private Expression compileExpression(String xpath) {
         Expression expr;
-
-        synchronized (compiled) {
-            if (USE_SOFT_CACHE) {
-                expr = null;
-                SoftReference ref = (SoftReference) compiled.get(xpath);
-                if (ref != null) {
-                    expr = (Expression) ref.get();
-                }
+        if (USE_SOFT_CACHE) {
+            expr = null;
+            SoftReference ref = (SoftReference) compiled.get(xpath);
+            if (ref != null) {
+                expr = (Expression) ref.get();
             }
             else {
-                expr = (Expression) compiled.get(xpath);
+                // fast remove
+                assert ref == null;
+                compiled.remove(xpath, ref);
             }
+            if (expr == null) {
+                // fast remove
+                compiled.remove(xpath, ref);
+            }
+        }
+        else {
+            expr = (Expression) compiled.get(xpath);
         }
 
         if (expr != null) {
@@ -250,9 +256,11 @@ public class JXPathContextReferenceImpl extends JXPathContext {
 
         expr = (Expression) Parser.parseExpression(xpath, getCompiler());
 
-        synchronized (compiled) {
-            if (USE_SOFT_CACHE) {
-                if (cleanupCount++ >= CLEANUP_THRESHOLD) {
+        if (USE_SOFT_CACHE) {
+            final int incrementedCleanupCount = cleanupCount.incrementAndGet();
+            if (incrementedCleanupCount >= CLEANUP_THRESHOLD) {
+                // compare and set to zero atomically to prevent concurrent clean-ups
+                if (cleanupCount.compareAndSet(incrementedCleanupCount, 0)) {
                     Iterator it = compiled.entrySet().iterator();
                     while (it.hasNext()) {
                         Entry me = (Entry) it.next();
@@ -260,13 +268,12 @@ public class JXPathContextReferenceImpl extends JXPathContext {
                             it.remove();
                         }
                     }
-                    cleanupCount = 0;
                 }
-                compiled.put(xpath, new SoftReference(expr));
             }
-            else {
-                compiled.put(xpath, expr);
-            }
+            compiled.put(xpath, new SoftReference(expr));
+        }
+        else {
+            compiled.put(xpath, expr);
         }
 
         return expr;
