@@ -86,6 +86,9 @@ under the License.
     <distMgmtReleaseUrl>https://repo.seeburger.de/archiva/repository/release/</distMgmtReleaseUrl>
     <distMgmtSnapshotsName>SEE Development Snapshot Repository</distMgmtSnapshotsName>
     <distMgmtReleaseName>SEE Release Distribution Repository</distMgmtReleaseName>
+
+    <maven.compile.source>1.6</maven.compile.source>
+    <maven.compile.target>1.6</maven.compile.target>
   </properties>
 
   <build>
