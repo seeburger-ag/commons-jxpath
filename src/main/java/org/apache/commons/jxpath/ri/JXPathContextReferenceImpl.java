@@ -16,18 +16,15 @@
  */
 package org.apache.commons.jxpath.ri;
 
+import java.io.Serializable;
+import java.lang.management.ManagementFactory;
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
 import java.lang.ref.SoftReference;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.Map.Entry;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.jxpath.CompiledExpression;
 import org.apache.commons.jxpath.ExceptionHandler;
@@ -46,6 +43,7 @@ import org.apache.commons.jxpath.ri.compiler.Expression;
 import org.apache.commons.jxpath.ri.compiler.LocationPath;
 import org.apache.commons.jxpath.ri.compiler.Path;
 import org.apache.commons.jxpath.ri.compiler.TreeCompiler;
+import org.apache.commons.jxpath.ri.jmx.JXPathStatisticsMBeanImpl;
 import org.apache.commons.jxpath.ri.model.NodePointer;
 import org.apache.commons.jxpath.ri.model.NodePointerFactory;
 import org.apache.commons.jxpath.ri.model.VariablePointerFactory;
@@ -57,6 +55,10 @@ import org.apache.commons.jxpath.util.ClassLoaderUtil;
 import org.apache.commons.jxpath.util.ReverseComparator;
 import org.apache.commons.jxpath.util.TypeUtils;
 
+import javax.management.JMException;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+
 /**
  * The reference implementation of JXPathContext.
  *
@@ -66,28 +68,70 @@ import org.apache.commons.jxpath.util.TypeUtils;
 public class JXPathContextReferenceImpl extends JXPathContext {
 
     /**
-     * Change this to <code>false</code> to disable soft caching of
-     * CompiledExpressions.
+     * Change this to <code>false</code> to disable soft caching of CompiledExpressions.
+     * If <code>false</code>, then hard-references will be used.
+     * @see #CACHE_ENABLED
      */
-    public static final boolean USE_SOFT_CACHE = true;
+    public static final boolean USE_SOFT_CACHE;
+
+    /**
+     * Default=true.
+     * Change to false for disabling caching.
+     */
+    public static final boolean CACHE_ENABLED;
+
+    /**
+     * Whether to provide cache statistics via MBean.
+     */
+    public static final boolean CACHE_STATISTICS;
+    private static JXPathStatisticsMBeanImpl jXPathStatisticsMBeanImpl;
 
     private static final Compiler COMPILER = new TreeCompiler();
-    private static ConcurrentMap compiled = new ConcurrentHashMap();
-    private static final AtomicInteger cleanupCount = new AtomicInteger();
+    private static final Map<String, Expression> compiled;
 
-    private static NodePointerFactory[] nodeFactoryArray = null;
-    // The frequency of the cache cleanup
-    private static final int CLEANUP_THRESHOLD = 100;
-    private static final Collection nodeFactories = new CopyOnWriteArrayList();
+    private static NodePointerFactory[] nodeFactoryArray;
+    private static final Collection<NodePointerFactory> nodeFactories = new CopyOnWriteArrayList<>();
 
     static {
+        // incorporating idea from https://issues.apache.org/jira/browse/JXPATH-195
+        CACHE_ENABLED = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.enabled", "true"));
+        CACHE_STATISTICS = Boolean.getBoolean("jxpath.cache.statistics");
+        USE_SOFT_CACHE = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.soft", "true"));
+        if (CACHE_ENABLED) {
+            final int compileCacheSize = Integer.getInteger("jxpath.cache.size", 50_000);
+            if (USE_SOFT_CACHE) {
+                compiled = new SoftConcurrentHashMap<>(compileCacheSize);
+            } else {
+                compiled = new LinkedHashMap<String, Expression>() {
+                    @Override
+                    protected boolean removeEldestEntry(java.util.Map.Entry eldest) {
+                        return this.size() > compileCacheSize;
+                    }
+                };
+            }
+
+            // statistics MBean
+            if (CACHE_STATISTICS) {
+                MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+                try {
+                    jXPathStatisticsMBeanImpl = new JXPathStatisticsMBeanImpl();
+                    mbs.registerMBean(jXPathStatisticsMBeanImpl, ObjectName.getInstance("org.apache.commons.commons-jxpath:Type=JXPathStatisticsMBean"));
+                } catch (JMException e) {
+                    // best effort only
+                }
+            }
+        }
+        else {
+            compiled = null;
+        }
+
         nodeFactories.add(new CollectionPointerFactory());
         nodeFactories.add(new BeanPointerFactory());
         nodeFactories.add(new DynamicPointerFactory());
         nodeFactories.add(new VariablePointerFactory());
 
         // DOM  factory is only registered if DOM support is on the classpath
-        Object domFactory = allocateConditionally(
+        NodePointerFactory domFactory = (NodePointerFactory) allocateConditionally(
                 "org.apache.commons.jxpath.ri.model.dom.DOMPointerFactory",
                 "org.w3c.dom.Node");
         if (domFactory != null) {
@@ -95,7 +139,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         }
 
         // JDOM  factory is only registered if JDOM is on the classpath
-        Object jdomFactory = allocateConditionally(
+        NodePointerFactory jdomFactory = (NodePointerFactory) allocateConditionally(
                 "org.apache.commons.jxpath.ri.model.jdom.JDOMPointerFactory",
                 "org.jdom.Document");
         if (jdomFactory != null) {
@@ -103,11 +147,11 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         }
 
         // DynaBean factory is only registered if BeanUtils are on the classpath
-        Object dynaBeanFactory =
-            allocateConditionally(
-                "org.apache.commons.jxpath.ri.model.dynabeans."
-                    + "DynaBeanPointerFactory",
-                "org.apache.commons.beanutils.DynaBean");
+        NodePointerFactory dynaBeanFactory =
+                (NodePointerFactory) allocateConditionally(
+                    "org.apache.commons.jxpath.ri.model.dynabeans."
+                        + "DynaBeanPointerFactory",
+                    "org.apache.commons.beanutils.DynaBean");
         if (dynaBeanFactory != null) {
             nodeFactories.add(dynaBeanFactory);
         }
@@ -121,9 +165,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
      */
     private static synchronized void createNodeFactoryArray() {
         if (nodeFactoryArray == null) {
-            nodeFactoryArray =
-                (NodePointerFactory[]) nodeFactories.
-                    toArray(new NodePointerFactory[nodeFactories.size()]);
+            nodeFactoryArray = nodeFactories.toArray(new NodePointerFactory[nodeFactories.size()]);
             Arrays.sort(nodeFactoryArray, new Comparator() {
                 public int compare(Object a, Object b) {
                     int orderA = ((NodePointerFactory) a).getOrder();
@@ -230,50 +272,35 @@ public class JXPathContextReferenceImpl extends JXPathContext {
      */
     private Expression compileExpression(String xpath) {
         Expression expr;
-        if (USE_SOFT_CACHE) {
-            expr = null;
-            SoftReference ref = (SoftReference) compiled.get(xpath);
-            if (ref != null) {
-                expr = (Expression) ref.get();
+        if (CACHE_ENABLED) {
+            expr = compiled.get(xpath);
+
+            if (expr != null) {
+                if (CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
+                    jXPathStatisticsMBeanImpl.incrementCacheHits();
+                }
+                return expr;
             }
-            else {
-                // fast remove
-                assert ref == null;
-                compiled.remove(xpath, ref);
+            if (CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
+                jXPathStatisticsMBeanImpl.incrementCacheMisses();
             }
-            if (expr == null) {
-                // fast remove
-                compiled.remove(xpath, ref);
-            }
-        }
-        else {
-            expr = (Expression) compiled.get(xpath);
         }
 
-        if (expr != null) {
-            return expr;
-        }
+        long start = System.nanoTime();
 
         expr = (Expression) Parser.parseExpression(xpath, getCompiler());
 
-        if (USE_SOFT_CACHE) {
-            final int incrementedCleanupCount = cleanupCount.incrementAndGet();
-            if (incrementedCleanupCount >= CLEANUP_THRESHOLD) {
-                // compare and set to zero atomically to prevent concurrent clean-ups
-                if (cleanupCount.compareAndSet(incrementedCleanupCount, 0)) {
-                    Iterator it = compiled.entrySet().iterator();
-                    while (it.hasNext()) {
-                        Entry me = (Entry) it.next();
-                        if (((SoftReference) me.getValue()).get() == null) {
-                            it.remove();
-                        }
-                    }
-                }
-            }
-            compiled.put(xpath, new SoftReference(expr));
+        if (CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
+            jXPathStatisticsMBeanImpl.addParseTime(System.nanoTime() - start);
+            jXPathStatisticsMBeanImpl.incrementParseCount();
         }
-        else {
+
+        if (CACHE_ENABLED) {
             compiled.put(xpath, expr);
+        }
+
+        if (CACHE_ENABLED && CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
+            jXPathStatisticsMBeanImpl.setCacheSize(compiled.size());
         }
 
         return expr;
@@ -826,6 +853,171 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         }
         catch (Exception ex) {
             throw new JXPathException("Cannot allocate " + className, ex);
+        }
+    }
+
+    /**
+     * SoftConcurrentHashMap.
+     * You can use the SoftConcurrentHashMap just like an ordinary HashMap,
+     * except that the entries will disappear if we are running low on memory.
+     * Ideal if you want to build a cache.
+     * <p>
+     * This implementation <b>is</b> thread-safe (just like {@link ConcurrentHashMap}).
+     * <p>
+     * This class does <b>not</b> allow null to be used as a key or value.
+     * <p>
+     * Inspired by http://www.javaspecialists.eu/archive/Issue098.html
+     */
+    private static class SoftConcurrentHashMap<K, V> extends AbstractMap<K, V> implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final int LIMIT;
+
+        /**
+         * The internal HashMap that will hold the SoftReference.
+         */
+        private final ConcurrentMap<K, SoftReference<V>> hash = new ConcurrentHashMap<>();
+
+        private final ConcurrentMap<SoftReference<V>, K> reverseLookup = new ConcurrentHashMap<>();
+
+        /**
+         * Reference queue for cleared SoftReference objects.
+         */
+        protected final ReferenceQueue<V> queue = new ReferenceQueue<>();
+
+        public SoftConcurrentHashMap(int limit) {
+            LIMIT = limit;
+        }
+
+        @Override
+        public V get(Object key) {
+            expungeStaleEntries();
+            V result = null;
+            // We get the SoftReference represented by that key
+            final SoftReference<V> soft_ref = hash.get(key);
+            if (soft_ref != null) {
+                // From the SoftReference we get the value, which can be
+                // null if it has been garbage collected
+                result = soft_ref.get();
+                if (result == null) {
+                    // If the value has been garbage collected, remove the
+                    // entry from the HashMap.
+                    hash.remove(key);
+                    reverseLookup.remove(soft_ref);
+                }
+            }
+            return result;
+        }
+
+        /**
+         * Check if GC released soft referenced values.
+         * Remove them from cache so that they will be created again.
+         */
+        private void expungeStaleEntries() {
+            Reference<? extends V> sv;
+            while ((sv = queue.poll()) != null) {
+                final K removed = reverseLookup.remove(sv);
+                if (removed != null) {
+                    hash.remove(removed);
+                }
+            }
+        }
+
+        /**
+         * Remove entries from cache if we reach maximum number of entries.
+         */
+        private void limitEntries() {
+            // only removing 1 entry, since called everytime on #put
+            if (hash.size() > LIMIT) {
+                if (CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
+                    jXPathStatisticsMBeanImpl.incrementLimitExceeded();
+                }
+                // no LRU or most-used possible, so remove any
+                Optional<K> anyKey = hash.keySet().stream().findAny();
+                if (anyKey.isPresent()) {
+                    SoftReference<V> removedValue = hash.remove(anyKey.get());
+                    if (removedValue != null) {
+                        reverseLookup.remove(removedValue);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public V put(K key, V value) {
+            expungeStaleEntries();
+            limitEntries();
+            final SoftReference<V> soft_ref = new SoftReference<>(value, queue);
+            final SoftReference<V> oldSoftRef = hash.put(key, soft_ref);
+            reverseLookup.put(soft_ref, key);
+            if (oldSoftRef == null) {
+                return null;
+            }
+            reverseLookup.remove(oldSoftRef);
+            return oldSoftRef.get();
+        }
+
+        @Override
+        public V remove(Object key) {
+            expungeStaleEntries();
+            final SoftReference<V> softRef = hash.remove(key);
+            // small concurrency gap - reverseLookup still holds entry
+            if (softRef == null) {
+                return null;
+            }
+            reverseLookup.remove(softRef);
+            return softRef.get();
+        }
+
+        @Override
+        public void clear() {
+            hash.clear();
+            reverseLookup.clear();
+        }
+
+        @Override
+        public int size() {
+            expungeStaleEntries();
+            return hash.size();
+        }
+
+        /**
+         * Returns a copy of the key/values in the map at the point of calling.
+         * However, setValue still sets the value in the actual SoftHashMap.
+         *
+         * @return a copy of the key/values in the map at the point of calling.
+         * @inheritDoc
+         * @see java.util.AbstractMap#entrySet()
+         */
+        @Override
+        public Set<Entry<K, V>> entrySet() {
+            expungeStaleEntries();
+            final Set<Entry<K, V>> result = new LinkedHashSet<>();
+            for (final Entry<K, SoftReference<V>> entry : hash.entrySet()) {
+                final V value = entry.getValue().get();
+                if (value != null) {
+                    result.add(new Entry<K, V>() {
+                        @Override
+                        public K getKey() {
+                            return entry.getKey();
+                        }
+
+
+                        @Override
+                        public V getValue() {
+                            return value;
+                        }
+
+
+                        @Override
+                        public V setValue(V v) {
+                            entry.setValue(new SoftReference<>(v, queue));
+                            return value;
+                        }
+                    });
+                }
+            }
+            return result;
         }
     }
 }
