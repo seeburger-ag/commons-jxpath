@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 import org.apache.commons.jxpath.CompiledExpression;
 import org.apache.commons.jxpath.ExceptionHandler;
@@ -89,6 +90,8 @@ public class JXPathContextReferenceImpl extends JXPathContext {
     private static final Compiler COMPILER = new TreeCompiler();
     private static final Map<String, Expression> compiled;
 
+    private static final Map<Integer, Function> functionCache;
+
     private static NodePointerFactory[] nodeFactoryArray;
     private static final Collection<NodePointerFactory> nodeFactories = new CopyOnWriteArrayList<>();
 
@@ -98,14 +101,22 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         CACHE_STATISTICS = Boolean.getBoolean("jxpath.cache.statistics");
         USE_SOFT_CACHE = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.soft", "true"));
         if (CACHE_ENABLED) {
-            final int compileCacheSize = Integer.getInteger("jxpath.cache.size", 50_000);
+            final int cacheSize = Integer.getInteger("jxpath.cache.size", 50_000);
             if (USE_SOFT_CACHE) {
-                compiled = new SoftConcurrentHashMap<>(compileCacheSize);
+                compiled = new SoftConcurrentHashMap<>(cacheSize);
+                functionCache = new SoftConcurrentHashMap<>(cacheSize);
             } else {
                 compiled = new LinkedHashMap<String, Expression>() {
                     @Override
                     protected boolean removeEldestEntry(java.util.Map.Entry eldest) {
-                        return this.size() > compileCacheSize;
+                        return this.size() > cacheSize;
+                    }
+                };
+
+                functionCache = new LinkedHashMap<Integer, Function>() {
+                    @Override
+                    protected boolean removeEldestEntry(java.util.Map.Entry eldest) {
+                        return this.size() > cacheSize;
                     }
                 };
             }
@@ -123,6 +134,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         }
         else {
             compiled = null;
+            functionCache = null;
         }
 
         nodeFactories.add(new CollectionPointerFactory());
@@ -765,16 +777,26 @@ public class JXPathContextReferenceImpl extends JXPathContext {
      * @return Function
      */
     public Function getFunction(QName functionName, Object[] parameters) {
+        Integer functionHash = getFunctionHash(functionName, parameters);
+        if (CACHE_ENABLED) {
+            Function func = functionCache.get(functionHash);
+            if (func != null) {
+                return func;
+            }
+        }
+
         String namespace = functionName.getPrefix();
         String name = functionName.getName();
         JXPathContext funcCtx = this;
-        Function func = null;
         Functions funcs;
         while (funcCtx != null) {
             funcs = funcCtx.getFunctions();
             if (funcs != null) {
-                func = funcs.getFunction(namespace, name, parameters);
+                Function func = funcs.getFunction(namespace, name, parameters);
                 if (func != null) {
+                    if (CACHE_ENABLED) {
+                        functionCache.put(functionHash, func);
+                    }
                     return func;
                 }
             }
@@ -783,6 +805,27 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         throw new JXPathFunctionNotFoundException(
             "Undefined function: " + functionName.toString());
     }
+
+
+    private static Integer getFunctionHash(QName functionName, Object[] parameters)
+    {
+        if (!CACHE_ENABLED) {
+            return Integer.valueOf(-1);
+        }
+
+        int hashParameters;
+        if (parameters == null) {
+            hashParameters = 0;
+        }
+        else
+        {
+            List<Object> paramList = Arrays.asList(parameters);
+            List<Class> classList = paramList.stream().map(p -> p.getClass()).collect(Collectors.toList());
+            hashParameters = Arrays.hashCode(classList.toArray());
+        }
+        return Integer.valueOf(Objects.hash(functionName, hashParameters));
+    }
+
 
     public void registerNamespace(String prefix, String namespaceURI) {
         if (namespaceResolver.isSealed()) {
