@@ -98,7 +98,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
         CACHE_STATISTICS = Boolean.getBoolean("jxpath.cache.statistics");
         USE_SOFT_CACHE = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.soft", "true"));
         if (CACHE_ENABLED) {
-            final int compileCacheSize = Integer.getInteger("jxpath.cache.size", 50_000);
+            final int compileCacheSize = Integer.getInteger("jxpath.cache.size", 200_000);
             if (USE_SOFT_CACHE) {
                 compiled = new SoftConcurrentHashMap<>(compileCacheSize);
             } else {
