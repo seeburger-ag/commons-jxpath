@@ -25,6 +25,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Logger;
 
 import org.apache.commons.jxpath.CompiledExpression;
 import org.apache.commons.jxpath.ExceptionHandler;
@@ -67,6 +68,8 @@ import javax.management.ObjectName;
  */
 public class JXPathContextReferenceImpl extends JXPathContext {
 
+    private static final Logger LOGGER = Logger.getLogger(JXPathContextReferenceImpl.class.getName());
+
     /**
      * Change this to <code>false</code> to disable soft caching of CompiledExpressions.
      * If <code>false</code>, then hard-references will be used.
@@ -92,20 +95,23 @@ public class JXPathContextReferenceImpl extends JXPathContext {
     private static NodePointerFactory[] nodeFactoryArray;
     private static final Collection<NodePointerFactory> nodeFactories = new CopyOnWriteArrayList<>();
 
+    private static final int CACHE_SIZE = Integer.getInteger("jxpath.cache.size", 200_000);
+
     static {
         // incorporating idea from https://issues.apache.org/jira/browse/JXPATH-195
         CACHE_ENABLED = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.enabled", "true"));
-        CACHE_STATISTICS = Boolean.getBoolean("jxpath.cache.statistics");
+        CACHE_STATISTICS = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.statistics", "true"));
         USE_SOFT_CACHE = "true".equalsIgnoreCase(System.getProperty("jxpath.cache.soft", "true"));
         if (CACHE_ENABLED) {
-            final int compileCacheSize = Integer.getInteger("jxpath.cache.size", 200_000);
             if (USE_SOFT_CACHE) {
-                compiled = new SoftConcurrentHashMap<>(compileCacheSize);
+                compiled = new SoftConcurrentHashMap<>(CACHE_SIZE);
             } else {
                 compiled = new LinkedHashMap<String, Expression>() {
                     @Override
                     protected boolean removeEldestEntry(java.util.Map.Entry eldest) {
-                        return this.size() > compileCacheSize;
+                        boolean limitReached = this.size() > CACHE_SIZE;
+                        if (limitReached) logLimitReached();
+                        return limitReached;
                     }
                 };
             }
@@ -158,7 +164,16 @@ public class JXPathContextReferenceImpl extends JXPathContext {
 
         nodeFactories.add(new ContainerPointerFactory());
         createNodeFactoryArray();
+
+        LOGGER.info("JXPathContextReferenceImpl initialized with " + (CACHE_ENABLED ? ("cache size: " + CACHE_SIZE) : "disabled cache"));
     }
+
+
+    private static void logLimitReached()
+    {
+        LOGGER.warning("JXPath cache limit of " + CACHE_SIZE + " entries reached. Consider increasing jxpath.cache.size system property.");
+    }
+
 
     /**
      * Create the default node factory array.
@@ -932,6 +947,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
                 if (CACHE_STATISTICS && jXPathStatisticsMBeanImpl != null) {
                     jXPathStatisticsMBeanImpl.incrementLimitExceeded();
                 }
+                logLimitReached();
                 // no LRU or most-used possible, so remove any
                 Optional<K> anyKey = hash.keySet().stream().findAny();
                 if (anyKey.isPresent()) {
