@@ -120,7 +120,7 @@ public class JXPathContextReferenceImpl extends JXPathContext {
             if (CACHE_STATISTICS) {
                 MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
                 try {
-                    jXPathStatisticsMBeanImpl = new JXPathStatisticsMBeanImpl();
+                    jXPathStatisticsMBeanImpl = new JXPathStatisticsMBeanImpl(compiled);
                     mbs.registerMBean(jXPathStatisticsMBeanImpl, ObjectName.getInstance("org.apache.commons.commons-jxpath:Type=JXPathStatisticsMBean"));
                 } catch (JMException e) {
                     // best effort only

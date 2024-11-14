@@ -16,4 +16,6 @@ public interface JXPathStatisticsMBean {
     long getParseCount();
 
     long getAverageParseTimeInMillis();
+
+    void exportCacheKeys();
 }

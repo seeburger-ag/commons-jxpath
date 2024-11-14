@@ -2,9 +2,15 @@ package org.apache.commons.jxpath.ri.jmx;
 
 import javax.management.NotCompliantMBeanException;
 import javax.management.StandardMBean;
+
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.commons.jxpath.ri.compiler.Expression;
+import org.apache.commons.jxpath.util.CacheExportUtil;
+
 
 public class JXPathStatisticsMBeanImpl extends StandardMBean implements JXPathStatisticsMBean {
 
@@ -14,9 +20,11 @@ public class JXPathStatisticsMBeanImpl extends StandardMBean implements JXPathSt
     private static final AtomicLong limitExceeded = new AtomicLong();
     private static final AtomicLong parseTime = new AtomicLong();
     private static final AtomicLong parseCount = new AtomicLong();
+    private final Map<String, Expression> cache;
 
-    public JXPathStatisticsMBeanImpl() throws NotCompliantMBeanException {
+    public JXPathStatisticsMBeanImpl(Map<String, Expression> cache) throws NotCompliantMBeanException {
         super(JXPathStatisticsMBean.class);
+        this.cache = cache;
     }
 
     @Override
@@ -88,6 +96,11 @@ public class JXPathStatisticsMBeanImpl extends StandardMBean implements JXPathSt
     public void incrementLimitExceeded()
     {
         limitExceeded.incrementAndGet();
+    }
+
+    @Override
+    public void exportCacheKeys() {
+        CacheExportUtil.exportCacheKeys(cache);
     }
 
 }
