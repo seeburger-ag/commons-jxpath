@@ -32,7 +32,7 @@ under the License.
   <name>Apache Commons JXPath</name>
   <!-- when cutting a release, be sure to modify the commons.release.version property,
     found at /project/properties/commons.release.version in this document -->
-  <version>1.4.0.SEE8</version>
+  <version>1.4.0.SEE9-SNAPSHOT</version>
 
   <description>A Java-based implementation of XPath 1.0 that, in addition to XML processing, can inspect/modify Java object graphs (the library's explicit purpose) and even mixed Java/XML structures.</description>
   <url>http://commons.apache.org/proper/commons-jxpath/</url>
@@ -71,7 +71,7 @@ under the License.
     <connection>scm:git:git@github.com:seeburger-ag/commons-jxpath.git</connection>
     <developerConnection>scm:git:git@github.com:seeburger-ag/commons-jxpath.git</developerConnection>
     <url>https://github.com/seeburger-ag/commons-jxpath</url>
-    <tag>commons-jxpath-1.4.0.SEE8</tag>
+    <tag>HEAD</tag>
   </scm>
 
   <properties>
