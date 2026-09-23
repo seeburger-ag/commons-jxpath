@@ -101,6 +101,11 @@ public class ValueUtils {
      * Otherwise, attempts to guess the length of the collection by
      * calling the indexed get method repeatedly.  The method is supposed
      * to throw an exception if the index is out of bounds.
+     * <p>
+     * Note that a getter which signals "out of range" by returning
+     * <code>null</code> rather than by throwing defeats the loop below: it runs all
+     * {@link #UNKNOWN_LENGTH_MAX_COUNT} iterations and then fails. The loop is therefore kept as
+     * allocation-free as it reasonably can be.
      * @param object collection
      * @param pd IndexedPropertyDescriptor
      * @return int
@@ -117,9 +122,15 @@ public class ValueUtils {
                 "No indexed read method for property " + pd.getName());
         }
 
+        // -- The argument array is unpacked by the reflection machinery before the getter is
+        // -- entered, so the callee never gets a reference to it and it can safely be reused
+        // -- across iterations. This saves one array allocation per probed index, which matters
+        // -- because this loop can run UNKNOWN_LENGTH_MAX_COUNT times.
+        Object[] args = new Object[1];
         for (int i = 0; i < UNKNOWN_LENGTH_MAX_COUNT; i++) {
+            args[0] = Integer.valueOf(i);
             try {
-                readMethod.invoke(object, new Object[] { new Integer(i)});
+                readMethod.invoke(object, args);
             }
             catch (Throwable t) {
                 return i;
@@ -443,7 +454,7 @@ public class ValueUtils {
                 if (method != null) {
                     return method.invoke(
                         bean,
-                        new Object[] { new Integer(index)});
+                        new Object[] { Integer.valueOf(index)});
                 }
             }
             catch (InvocationTargetException ex) {
@@ -487,7 +498,7 @@ public class ValueUtils {
                     method.invoke(
                         bean,
                         new Object[] {
-                            new Integer(index),
+                            Integer.valueOf(index),
                             convert(value, ipd.getIndexedPropertyType())});
                     return;
                 }
