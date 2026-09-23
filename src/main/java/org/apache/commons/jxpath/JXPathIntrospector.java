@@ -90,6 +90,35 @@ public class JXPathIntrospector {
 	}
 
 	/**
+	 * Creates and registers a {@link JXPathFilteredBeanInfo} object for the
+	 * specified class, hiding the given properties from JXPath. All other
+	 * properties keep behaving exactly as with {@link JXPathBasicBeanInfo}.
+	 * <p>
+	 * Use this to shield JXPath from methods that JavaBeans introspection
+	 * misreads as properties. The classic case is an <em>indexed</em> getter
+	 * <code>T getSomething(int)</code> without a companion array getter, whose
+	 * length JXPath can only determine by invoking it up to 16000 times (see
+	 * {@link org.apache.commons.jxpath.util.ValueUtils#getIndexedPropertyLength}).
+	 * If that getter is cheap this is merely wasteful; if it enters a
+	 * synchronized region it turns into a process-wide lock convoy.
+	 * <p>
+	 * Registration must happen during start-up, before the class is traversed
+	 * for the first time, because {@link #getBeanInfo(Class)} caches whatever it
+	 * computed first. The registration applies to the exact class only, not to
+	 * its subclasses.
+	 *
+	 * @param beanClass class whose properties should be filtered, not null
+	 * @param excludedPropertyNames names of the properties to hide, neither null
+	 *            nor empty
+	 * @see JXPathFilteredBeanInfo
+	 */
+	public static void registerFilteredClass(Class beanClass,
+			String[] excludedPropertyNames) {
+		byClass.put(beanClass, new JXPathFilteredBeanInfo(beanClass,
+				excludedPropertyNames));
+	}
+
+	/**
 	 * Creates and registers a JXPathBeanInfo object for the supplied class. If
 	 * the class has already been registered, returns the registered
 	 * JXPathBeanInfo object.
