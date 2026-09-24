@@ -75,12 +75,13 @@ under the License.
   </scm>
 
   <properties>
-    <!-- Java 11 baseline. NOTE: commons-parent 39 pins maven-compiler-plugin 3.3,
-         which predates the <release> option (added in 3.6.0). Once the compiler
-         plugin is upgraded, replace source/target with:
-           <maven.compiler.release>11</maven.compiler.release> -->
-    <maven.compiler.source>11</maven.compiler.source>
-    <maven.compiler.target>11</maven.compiler.target>
+    <!-- Java 21 (LTS) baseline. <maven.compiler.release> is the authoritative
+         setting and requires the locally pinned maven-compiler-plugin (>= 3.6.0).
+         source/target are kept in sync because commons-parent 39 feeds them into
+         the X-Compile-Source-JDK / X-Compile-Target-JDK manifest entries. -->
+    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
 
     <commons.componentid>jxpath</commons.componentid>
     <commons.module.name>org.apache.commons.jxpath</commons.module.name>
@@ -88,7 +89,10 @@ under the License.
     <commons.release.version>1.4</commons.release.version>
     <commons.jira.id>JXPATH</commons.jira.id>
     <commons.jira.pid>12310480</commons.jira.pid>
-    <commons.osgi.import>*;resolution:=optional</commons.osgi.import>
+    <!-- bnd 7 (maven-bundle-plugin 6.x) would otherwise add java.* entries to
+         Import-Package. Those are illegal in pre-R7 OSGi frameworks and were not
+         present before the upgrade, so they are excluded explicitly. -->
+    <commons.osgi.import>!java.*,*;resolution:=optional</commons.osgi.import>
 
     <!-- SEE: overwriting repository URLs and names -->
     <distMgmtSnapshotsUrl>https://repo.seeburger.de/archiva/repository/snapshot/</distMgmtSnapshotsUrl>
@@ -99,13 +103,33 @@ under the License.
 
   <build>
     <plugins>
+      <!-- commons-parent 39 pins maven-compiler-plugin 3.3, which predates JDK 9+
+           support and the <release> option (added in 3.6.0). Pin a current version. -->
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.14.0</version>
+      </plugin>
+      <!-- commons-parent 39 pins maven-surefire-plugin 2.18.1, whose forked booter
+           does not support JDK 9+. Surefire 3.x still ships the surefire-junit3
+           provider required by the JUnit 3.8.1 based test suite. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.4</version>
         <configuration>
           <includes>
             <include>**/*Test.java</include>
           </includes>
         </configuration>
+      </plugin>
+      <!-- commons-parent 39 pins org.apache.felix:maven-bundle-plugin 2.5.3, which
+           embeds bnd 2.3 and aborts on class-file major version 65 (Java 21).
+           Plugin 6.x embeds bnd 7.x and requires a JDK 17+ build JVM. -->
+      <plugin>
+        <groupId>org.apache.felix</groupId>
+        <artifactId>maven-bundle-plugin</artifactId>
+        <version>6.2.0</version>
       </plugin>
       <plugin>
         <artifactId>maven-assembly-plugin</artifactId>
@@ -179,7 +203,9 @@ under the License.
     <dependency>
       <groupId>commons-beanutils</groupId>
       <artifactId>commons-beanutils</artifactId>
-      <version>1.8.2</version>
+      <!-- 1.11.0 fixes CVE-2014-0114, CVE-2019-10086 and CVE-2025-48734.
+           Do not downgrade. -->
+      <version>1.11.0</version>
       <optional>true</optional>
     </dependency>
     <dependency>
